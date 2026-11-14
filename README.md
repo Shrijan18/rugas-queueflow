@@ -203,8 +203,8 @@ erDiagram
 ### Step 1: Clone Repository & Install Dependencies
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/QueueFlow.git
-cd QueueFlow
+git clone https://github.com/Shrijan18/rugas-queueflow.git
+cd rugas-queueflow
 
 # Install dependencies for both server and client
 npm run install:all
@@ -258,29 +258,56 @@ Open your browser at **`http://localhost:5173`**.
 
 ---
 
-## 🧪 Automated Testing
+---
 
-QueueFlow includes a full 14-step automated end-to-end integration test suite verifying authentication, queue ordering, concurrency locks, and analytics:
+## 🎬 Automated Video Recording & One-Click Review Demo
+
+QueueFlow provides an automated walkthrough script powered by Puppeteer CDP that starts services, launches Google Chrome maximized, and demonstrates every single assignment feature with live on-screen explanatory banners:
 
 ```bash
-cd server
-npm test
+# On Windows, simply double-click:
+run_demo_recording.bat
+
+# Or run via npm:
+npm run demo:record
 ```
 
-### Test Suite Output
+This automated script covers:
+1. Manager Login with demo credentials (`demo@queueflow.com` / `password123`) via secure HTTP-only cookies.
+2. Operational Dashboard with 6 real-time KPI cards.
+3. Queue Creation with custom prefix codes (e.g. `VIP`).
+4. Adding persons to generate sequential token numbers.
+5. Priority reordering (`Move Up` / `Move Down`) with boundary checks.
+6. Calling the next token for service with single-serving lock and real-time elapsed timer.
+7. Completing service with duration calculation.
+8. Cancelling tokens with safety confirmation dialogs.
+9. Performance analytics with genuine historical snapshots and Chart.js telemetry.
+10. Usability Help Guide toggle and manager security profile.
+
+---
+
+## 🧪 Automated Testing
+
+QueueFlow features a comprehensive 20-step automated integration test suite plus an advanced concurrency & security verification suite:
+
+### 1. End-to-End Functional Test Suite (20 Tests)
+```bash
+node server/test/e2e.test.js
+```
+
 ```text
 ====================================================
 🚀 RUNNING QUEUEFLOW COMPREHENSIVE END-TO-END TESTS
 ====================================================
 
 ▶ Test 1: Manager Registration...
-  ✓ Manager registered successfully: ID 1
+  ✓ Manager registered successfully: ID 2
 ▶ Test 2: Prevent Duplicate Registration...
   ✓ Duplicate email rejected with 409 Conflict.
 ▶ Test 3: Manager Login...
   ✓ Manager authenticated successfully.
 ▶ Test 4: Create Queues...
-  ✓ Queue created: "General Consultation" with prefix "DOC" (ID: 1)
+  ✓ Queue created: "General Consultation" with prefix "DOC" (ID: 3)
 ▶ Test 5: Add Tokens to Queue (Rahul, Amit, Priya)...
   ✓ Issued Token DOC001 for Rahul Verma at Position 1
   ✓ Issued Token DOC002 for Amit Patel at Position 2
@@ -297,20 +324,54 @@ npm test
 ▶ Test 10: Complete Service...
   ✓ Completed service for Token DOC001. Service duration calculated.
 ▶ Test 11: Call Next Token after completion...
-  ✓ Successfully called next Token DOC002.
+  ✓ Successfully called next Token DOC002 (Amit Patel).
 ▶ Test 12: Cancel Waiting Token...
   ✓ Token DOC003 cancelled.
 ▶ Test 13: Verify Analytics & KPI Calculations...
-  ✓ Total Tokens: 3
-  ✓ Total Completed: 1
-  ✓ Total Cancelled: 1
-  ✓ Currently Serving: 1
-  ✓ Currently Waiting: 0
+  ✓ Total Tokens: 3 | Completed: 1 | Cancelled: 1 | Serving: 1 | Waiting: 0
 ▶ Test 14: Manager Ownership Security...
   ✓ Resource ownership access control verified (403 Forbidden).
+▶ Test 15: Duplicate Queue Name Prevention (Case-Insensitive)...
+  ✓ Duplicate queue name rejected: "You already have an active queue named..."
+▶ Test 16: Cross-Manager Queue Name Permitted...
+  ✓ Different manager allowed to create queue with identical name.
+▶ Test 17: Disallow Cancellation of SERVING Tokens...
+  ✓ Cancellation blocked on SERVING token.
+▶ Test 18: Token Sequence Never Reused After Cancellation...
+  ✓ Token number sequence preserved: Issued DOC004 (DOC003 never reused).
+▶ Test 19: Dashboard and My Queues Data Consistency...
+  ✓ Queue count 100% synchronized: Dashboard (1) === My Queues (1)
+▶ Test 20: Genuine Snapshot Analytics...
+  ✓ Genuine historical snapshot points verified: 9 points logged.
 
 ====================================================
-🎉 ALL 14 TEST SUITES PASSED FLAWLESSLY!
+🎉 ALL 20 TEST SUITES PASSED FLAWLESSLY!
+====================================================
+```
+
+### 2. Advanced Concurrency & Security Verification Suite
+```bash
+node server/test/concurrency.test.js
+```
+
+```text
+====================================================
+⚡ RUNNING ADVANCED CONCURRENCY & SECURITY VERIFICATION
+====================================================
+
+▶ [Verification 6] JWT Authentication & HTTP-Only Cookie Behavior...
+  ✓ JWT authentication strictly uses HTTP-only cookies; token is never exposed in JSON response.
+▶ [Verification 4] Simultaneous Token Creation (10 Parallel Requests in Promise.all)...
+  ✓ 10 simultaneous token creations handled safely without collisions (unique tokens & positions 1-10).
+▶ [Verification 3 & 5] Simultaneous CALL NEXT Requests (Race Condition Test)...
+  ✓ Simultaneous requests result: 1 succeeded (200), 4 safely rejected (400).
+  ✓ Verified database integrity: exactly ONE token in SERVING state exists for this queue.
+▶ [Verification 7] CORS Origin Policy Test...
+  ✓ Frontend origin http://localhost:5173 is permitted with credentials.
+  ✓ Untrusted origin https://malicious-external-site.com is strictly blocked.
+
+====================================================
+🎉 ALL CONCURRENCY, SECURITY & DATABASE TESTS PASSED!
 ====================================================
 ```
 
