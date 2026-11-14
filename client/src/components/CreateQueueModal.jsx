@@ -134,3 +134,4 @@ const CreateQueueModal = ({ isOpen, onClose, onSubmit, editingQueue = null }) =>
 };
 
 export default CreateQueueModal;
+

@@ -24,6 +24,81 @@ const schemaPath = path.join(__dirname, '../database/schema.sql');
 const schemaSql = fs.existsSync(schemaPath) ? fs.readFileSync(schemaPath, 'utf8') : '';
 
 /**
+ * Seed initial demo manager and sample queues if database is empty
+ */
+const seedDemoData = async (targetPool) => {
+  try {
+    const check = await targetPool.query('SELECT COUNT(*)::int AS cnt FROM managers');
+    if (check.rows[0].cnt === 0) {
+      console.log('🌱 [Database] Seeding demo manager and test queues...');
+      // Password is 'password123'
+      const passHash = '$2a$10$d9H9wUoleP4oujz/444xtuiXEbXyA8OsLG8FbLr3dnqI/p7ENAYaC';
+      
+      const mgrRes = await targetPool.query(
+        `INSERT INTO managers (full_name, email, password)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        ['Demo Manager', 'demo@queueflow.com', passHash]
+      );
+      const managerId = mgrRes.rows[0].id;
+
+      // Seed Queue 1: Doctor Consultation
+      const q1Res = await targetPool.query(
+        `INSERT INTO queues (manager_id, name, prefix)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [managerId, 'Doctor Consultation', 'DOC']
+      );
+      const q1Id = q1Res.rows[0].id;
+
+      // Add tokens to Queue 1
+      await targetPool.query(
+        `INSERT INTO tokens (queue_id, token_number, person_name, phone_number, position, status)
+         VALUES 
+           ($1, 'DOC001', 'Rahul Verma', '+91 9876543210', 1, 'WAITING'),
+           ($1, 'DOC002', 'Amit Patel', '+91 9123456789', 2, 'WAITING'),
+           ($1, 'DOC003', 'Priya Singh', '+91 9988776655', 3, 'WAITING')`,
+        [q1Id]
+      );
+
+      await targetPool.query(
+        `INSERT INTO queue_snapshots (queue_id, waiting_count, serving_count)
+         VALUES ($1, 3, 0)`,
+        [q1Id]
+      );
+
+      // Seed Queue 2: Cash & Billing Counter
+      const q2Res = await targetPool.query(
+        `INSERT INTO queues (manager_id, name, prefix)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [managerId, 'Cash & Billing Counter', 'CSH']
+      );
+      const q2Id = q2Res.rows[0].id;
+
+      // Add tokens to Queue 2
+      await targetPool.query(
+        `INSERT INTO tokens (queue_id, token_number, person_name, phone_number, position, status)
+         VALUES 
+           ($1, 'CSH001', 'John Doe', '+1 555-0199', 1, 'WAITING'),
+           ($1, 'CSH002', 'Sneha Rao', '+91 9811223344', 2, 'WAITING')`,
+        [q2Id]
+      );
+
+      await targetPool.query(
+        `INSERT INTO queue_snapshots (queue_id, waiting_count, serving_count)
+         VALUES ($1, 2, 0)`,
+        [q2Id]
+      );
+
+      console.log('✅ [Database] Seeded test manager (demo@queueflow.com / password123) with sample queues.');
+    }
+  } catch (err) {
+    console.warn('⚠️ [Database] Seed check warning:', err.message);
+  }
+};
+
+/**
  * Initialize Database Connection
  * Tries real PostgreSQL first; seamlessly falls back to embedded pg-mem if live DB is unreachable.
  */
@@ -47,6 +122,8 @@ const initDb = async () => {
       await pool.query(schemaSql);
       console.log('✅ [Database] PostgreSQL schema verified/initialized.');
     }
+
+    await seedDemoData(pool);
     return pool;
   } catch (err) {
     console.warn(`⚠️ [Database] Live PostgreSQL connection failed (${err.message}).`);
@@ -58,14 +135,11 @@ const initDb = async () => {
         autoCreateForeignKeyIndices: true,
       });
 
-      // Register current_timestamp and helpers if needed
       memDb.public.registerFunction({
         name: 'current_timestamp',
         implementation: () => new Date(),
       });
 
-      // pg-mem doesn't support complex partial unique indices syntax in DDL directly in some versions,
-      // so we sanitize partial index clauses for memory simulation if needed, or apply schema cleanly
       const sanitizedSchema = schemaSql
         .replace(/CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_serving_per_queue[\s\S]*?;/gi, '-- partial index handled in controller')
         .replace(/TIMESTAMP WITH TIME ZONE/gi, 'TIMESTAMP');
@@ -76,6 +150,8 @@ const initDb = async () => {
       pool = new pgAdapter.Pool();
       isInMemory = true;
       console.log('✅ [Database] Embedded PostgreSQL memory database initialized successfully.');
+
+      await seedDemoData(pool);
       return pool;
     } catch (memErr) {
       console.error('❌ [Database] Failed to initialize fallback in-memory PostgreSQL:', memErr);

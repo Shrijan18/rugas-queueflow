@@ -19,3 +19,4 @@ router.get('/token-distribution', getTokenDistribution);
 router.get('/daily-tokens', getDailyTokens);
 
 module.exports = router;
+

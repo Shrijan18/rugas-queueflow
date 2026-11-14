@@ -486,3 +486,4 @@ const QueueDetails = () => {
 };
 
 export default QueueDetails;
+

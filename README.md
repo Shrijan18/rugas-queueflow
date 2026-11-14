@@ -411,3 +411,4 @@ When explaining this project during a technical interview, use these key talking
 
 ## 📄 License
 This project is licensed under the MIT License. Developed as a production-quality full-stack showcase.
+

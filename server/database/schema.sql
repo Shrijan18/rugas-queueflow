@@ -87,3 +87,4 @@ CREATE INDEX IF NOT EXISTS idx_queue_snapshots_queue_id
 
 CREATE INDEX IF NOT EXISTS idx_queue_snapshots_recorded_at 
     ON queue_snapshots (recorded_at);
+

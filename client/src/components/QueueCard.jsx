@@ -105,3 +105,4 @@ const QueueCard = ({ queue, onEdit, onDelete }) => {
 };
 
 export default QueueCard;
+

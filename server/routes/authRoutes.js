@@ -48,3 +48,4 @@ router.post('/logout', logout);
 router.get('/me', requireAuth, getMe);
 
 module.exports = router;
+

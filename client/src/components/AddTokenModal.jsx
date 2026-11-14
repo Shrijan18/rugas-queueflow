@@ -128,3 +128,4 @@ const AddTokenModal = ({ isOpen, onClose, onSubmit, queueName }) => {
 };
 
 export default AddTokenModal;
+

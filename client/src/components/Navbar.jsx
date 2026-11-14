@@ -61,3 +61,4 @@ const Navbar = ({ onMenuClick, title = 'Dashboard' }) => {
 };
 
 export default Navbar;
+

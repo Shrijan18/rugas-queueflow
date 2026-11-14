@@ -10,3 +10,4 @@ router.get('/stats', getDashboardStats);
 router.get('/recent-activity', getRecentActivity);
 
 module.exports = router;
+
