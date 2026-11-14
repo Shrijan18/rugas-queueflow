@@ -2,8 +2,26 @@ const puppeteer = require('../server/node_modules/puppeteer-core');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { spawn } = require('child_process');
+const readline = require('readline');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const rootDir = path.resolve(__dirname, '..');
+
+// Helper to prompt user in terminal
+function askQuestion(query) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise((resolve) =>
+    rl.question(query, (ans) => {
+      rl.close();
+      resolve(ans);
+    })
+  );
+}
 
 // Candidate browser executable paths on Windows
 const BROWSER_PATHS = [
@@ -29,38 +47,102 @@ function pingUrl(url) {
   });
 }
 
-// Helper to verify both backend and frontend are online before launching browser
-async function waitForServices(maxAttempts = 15) {
+// Helper to ensure both backend and frontend are running, starting them if needed
+async function ensureServicesRunning(maxAttempts = 15) {
+  console.log('🔍 Checking QueueFlow services...');
+  let [backReady, frontReady] = await Promise.all([
+    pingUrl(BACKEND_URL),
+    pingUrl(APP_URL),
+  ]);
+
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+  if (!backReady) {
+    console.log('🚀 Backend (port 5002) is offline. Starting Express server...');
+    const backendProc = spawn(npmCmd, ['run', 'server'], {
+      cwd: rootDir,
+      detached: true,
+      stdio: 'ignore',
+    });
+    backendProc.unref();
+  } else {
+    console.log('✅ Backend server (port 5002) is already online.');
+  }
+
+  if (!frontReady) {
+    console.log('🚀 Frontend (port 5173) is offline. Starting Vite client...');
+    const clientProc = spawn(npmCmd, ['run', 'client'], {
+      cwd: rootDir,
+      detached: true,
+      stdio: 'ignore',
+    });
+    clientProc.unref();
+  } else {
+    console.log('✅ Frontend client (port 5173) is already online.');
+  }
+
+  if (backReady && frontReady) return true;
+
+  console.log('⏳ Waiting for servers to initialize and become ready...');
   for (let i = 1; i <= maxAttempts; i++) {
-    const [backReady, frontReady] = await Promise.all([
+    await sleep(1500);
+    [backReady, frontReady] = await Promise.all([
       pingUrl(BACKEND_URL),
       pingUrl(APP_URL),
     ]);
     if (backReady && frontReady) {
-      console.log('✅ Both Backend (port 5002) and Frontend (port 5173) are ready.');
+      console.log('✅ Both Backend (5002) and Frontend (5173) are fully online!');
       return true;
     }
-    console.log(`⏳ Waiting for services: Backend=${backReady ? 'OK' : 'Waiting'}, Frontend=${frontReady ? 'OK' : 'Waiting'} (attempt ${i}/${maxAttempts})...`);
-    await sleep(1500);
   }
+
   return false;
 }
 
 async function runDemo() {
+  console.log(`
+================================================================================
+   QueueFlow: Smart Queue Management System - Automated Video Recording Demo
+================================================================================
+   Assignment Features Demonstrated:
+   1. Manager Authentication (Secure JWT HTTP-Only Cookies)
+   2. Operational Dashboard (6 KPI Cards & Real-Time Queue Directory)
+   3. Create New Queue with Custom Prefix Code
+   4. Add Person to Queue (Auto-Generated Sequential Token)
+   5. Priority Reordering (Move Up / Down with DB Transactions & Boundary Lock)
+   6. Call Next Token for Service (Strict Single Serving Token Rule & Live Timer)
+   7. Complete Service (Duration Tracking) & Cancel Token (Confirmation Modal)
+   8. Analytics Dashboard (Historical Snapshot Trends, Doughnut, Throughput)
+   9. Usability Help Guide Banner & Manager Profile
+================================================================================
+`);
+
   if (!BROWSER_PATH) {
     console.error('❌ Could not locate Google Chrome or Microsoft Edge executable.');
     process.exit(1);
   }
 
-  console.log(`🔍 Checking QueueFlow services (Backend 5002 & Frontend 5173)...`);
-  const servicesReady = await waitForServices();
+  const servicesReady = await ensureServicesRunning();
   if (!servicesReady) {
-    console.error(`❌ Could not connect to QueueFlow backend or frontend.`);
-    console.error('👉 Please ensure dev servers are running: "npm run server" and "npm run client"');
+    console.error('❌ Could not connect to QueueFlow backend or frontend after startup.');
     process.exit(1);
   }
 
-  console.log(`🎬 Launching browser: ${BROWSER_PATH}`);
+  console.log(`
+================================================================================
+   INSTRUCTIONS FOR SCREEN RECORDING:
+================================================================================
+   1. Start your screen recorder now:
+      - Windows Built-in: Press  Win + Alt + R  (Xbox Game Bar)
+      - Or start Loom / OBS / Camtasia
+
+   2. When your recording is ACTIVE, press [ENTER] below to begin the demo.
+      (Chrome will launch maximized and perform all actions smoothly)
+================================================================================
+`);
+
+  await askQuestion('👉 Press [ENTER] when your screen recorder is active to begin...');
+  console.log('\n🎬 Launching automated demo walkthrough in Chrome...');
 
   const browser = await puppeteer.launch({
     executablePath: BROWSER_PATH,
@@ -354,8 +436,17 @@ async function runDemo() {
     } catch (_) {}
   } finally {
     // Keep browser open for a few seconds so user can stop screen recording cleanly
-    await sleep(5000);
-    await browser.close();
+    await sleep(4000);
+    try {
+      await browser.close();
+    } catch (_) {}
+    console.log(`
+================================================================================
+   🎉 DEMO WALKTHROUGH COMPLETED SUCCESSFULLY!
+   You can now stop your screen recorder (Win + Alt + R).
+================================================================================
+`);
+    await askQuestion('👉 Press [ENTER] to exit...');
   }
 }
 
