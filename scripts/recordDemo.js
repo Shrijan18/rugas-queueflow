@@ -1,6 +1,7 @@
 const puppeteer = require('../server/node_modules/puppeteer-core');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -16,11 +17,38 @@ const BROWSER_PATHS = [
 const BROWSER_PATH = BROWSER_PATHS.find((p) => p && fs.existsSync(p));
 const APP_URL = 'http://localhost:5173';
 
+// Helper to verify frontend is responding before launching browser
+async function waitForServer(url, maxAttempts = 12) {
+  for (let i = 1; i <= maxAttempts; i++) {
+    const isUp = await new Promise((resolve) => {
+      const req = http.get(url, (res) => resolve(res.statusCode < 500));
+      req.on('error', () => resolve(false));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+    if (isUp) return true;
+    console.log(`⏳ Waiting for QueueFlow frontend (${url}) to respond... attempt ${i}/${maxAttempts}`);
+    await sleep(1500);
+  }
+  return false;
+}
+
 async function runDemo() {
   if (!BROWSER_PATH) {
     console.error('❌ Could not locate Google Chrome or Microsoft Edge executable.');
     process.exit(1);
   }
+
+  console.log(`🔍 Checking if QueueFlow is online at ${APP_URL}...`);
+  const serverReady = await waitForServer(APP_URL);
+  if (!serverReady) {
+    console.error(`❌ Could not connect to QueueFlow at ${APP_URL}.`);
+    console.error('👉 Please start the servers first: "npm run server" and "npm run client"');
+    process.exit(1);
+  }
+
   console.log(`🎬 Launching browser: ${BROWSER_PATH}`);
 
   const browser = await puppeteer.launch({
@@ -61,7 +89,7 @@ async function runDemo() {
   };
 
   // Helper to show stylish banner on screen explaining each step for the video
-  const showBanner = async (stepText, subText = '', duration = 2200) => {
+  const showBanner = async (stepText, subText = '', duration = 2400) => {
     console.log(`\n📌 [DEMO STEP] ${stepText}`);
     try {
       await page.evaluate((title, sub) => {
@@ -104,16 +132,16 @@ async function runDemo() {
     await sleep(2000);
 
     // Initial countdown for screen recorder
-    await showBanner('QueueFlow – Smart Queue Management System', 'Starting demonstration... screen recording active', 3000);
+    await showBanner('QueueFlow – Smart Queue Management System', 'Full End-to-End Walkthrough Demonstration', 3000);
 
     // STEP 1: DEMO CREDENTIALS & LOGIN
     await showBanner('Step 1: Manager Authentication', 'Filling demo credentials: demo@queueflow.com / password123');
     await page.waitForSelector('input[type="email"]');
     await page.click('input[type="email"]');
-    await page.type('input[type="email"]', 'demo@queueflow.com', { delay: 40 });
+    await page.type('input[type="email"]', 'demo@queueflow.com', { delay: 35 });
     await sleep(300);
     await page.click('input[type="password"]');
-    await page.type('input[type="password"]', 'password123', { delay: 40 });
+    await page.type('input[type="password"]', 'password123', { delay: 35 });
     await sleep(600);
 
     // Click Sign In
@@ -125,7 +153,7 @@ async function runDemo() {
     await page.waitForSelector('h1', { timeout: 8000 });
 
     // STEP 2: DASHBOARD & 6 KPI CARDS
-    await showBanner('Step 2: Operational Dashboard', 'Real-time overview with 6 KPI cards & active queues');
+    await showBanner('Step 2: Operational Dashboard', 'Real-time overview with 6 live KPI cards & queue monitor');
     await page.evaluate(() => window.scrollBy({ top: 320, behavior: 'smooth' }));
     await sleep(2500);
     await page.evaluate(() => window.scrollBy({ top: 300, behavior: 'smooth' }));
@@ -133,23 +161,29 @@ async function runDemo() {
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
     await sleep(1500);
 
-    // STEP 3: CREATE NEW QUEUE
-    await showBanner('Step 3: Creating a New Queue Line', 'Opening Create Queue modal and issuing custom prefix');
+    // STEP 3: CREATE NEW QUEUE (Unique Name to avoid collision)
+    const randomSuffix = Math.floor(100 + Math.random() * 900);
+    const newQueueName = `VIP Express Line ${randomSuffix}`;
+    await showBanner('Step 3: Creating a New Queue Line', `Issuing new queue: "${newQueueName}" with prefix "VIP"`);
     await clickButtonByText('Create Queue');
     await sleep(1000);
 
     await page.waitForSelector('input[required]', { visible: true, timeout: 6000 });
-    await page.type('input[required]', 'VIP Express Counter', { delay: 60 });
-    await sleep(500);
+    const nameInput = await page.$('input[placeholder*="General Consultation"]');
+    if (nameInput) {
+      await nameInput.click();
+      await nameInput.type(newQueueName, { delay: 40 });
+    } else {
+      await page.type('input[required]', newQueueName, { delay: 40 });
+    }
+    await sleep(400);
 
-    await page.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input'));
-      if (inputs.length > 1) {
-        inputs[1].value = 'VIP';
-        inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
-      }
-    });
-    await sleep(1000);
+    const prefixInput = await page.$('input[maxLength="4"]');
+    if (prefixInput) {
+      await prefixInput.click();
+      await prefixInput.type('VIP', { delay: 50 });
+    }
+    await sleep(800);
 
     await page.evaluate(() => {
       const modalForm = document.querySelector('form');
@@ -158,7 +192,7 @@ async function runDemo() {
         if (submitBtn) submitBtn.click();
       }
     });
-    await sleep(2200);
+    await sleep(2500);
 
     // STEP 4: GO TO MY QUEUES
     await showBanner('Step 4: Queue Management Directory', 'Navigating to My Queues with search filter');
@@ -171,17 +205,18 @@ async function runDemo() {
     await sleep(2500);
 
     // STEP 6: ADD NEW PERSON TO QUEUE
-    await showBanner('Step 6: Adding Person to Queue', 'Issuing auto-generated sequential token');
+    await showBanner('Step 6: Adding Person to Queue', 'Issuing auto-generated sequential token for Kavita Verma');
     await clickButtonByText('Add Person to Queue');
     await sleep(1200);
 
     await page.waitForSelector('form input', { visible: true, timeout: 5000 });
-    const modalInputs = await page.$$('form input');
-    if (modalInputs.length > 0) {
-      await modalInputs[0].type('Kavita Verma', { delay: 60 });
+    const personNameInput = await page.$('input[placeholder*="Rahul Sharma"]');
+    if (personNameInput) {
+      await personNameInput.type('Kavita Verma', { delay: 45 });
     }
-    if (modalInputs.length > 1) {
-      await modalInputs[1].type('+91 98765 11223', { delay: 50 });
+    const phoneInput = await page.$('input[placeholder*="+91 98765"]');
+    if (phoneInput) {
+      await phoneInput.type('+91 98765 11223', { delay: 45 });
     }
     await sleep(1000);
 
@@ -199,19 +234,19 @@ async function runDemo() {
     await page.evaluate(() => window.scrollBy({ top: 380, behavior: 'smooth' }));
     await sleep(1500);
 
-    // Click Move Up on the second token
+    // Click Move Up on the second waiting token (skipping disabled first token)
     await page.evaluate(() => {
-      const upBtns = Array.from(document.querySelectorAll('button[title*="Move Up in queue"]'));
+      const upBtns = Array.from(document.querySelectorAll('button[title="Move Up in queue"]:not([disabled])'));
       if (upBtns.length > 0) upBtns[0].click();
     });
-    await sleep(2200);
+    await sleep(2500);
 
     // Click Move Down to restore order
     await page.evaluate(() => {
-      const downBtns = Array.from(document.querySelectorAll('button[title*="Move Down in queue"]'));
+      const downBtns = Array.from(document.querySelectorAll('button[title="Move Down in queue"]:not([disabled])'));
       if (downBtns.length > 0) downBtns[0].click();
     });
-    await sleep(2200);
+    await sleep(2500);
 
     // STEP 8: CALL NEXT TOKEN FOR SERVICE
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
@@ -222,11 +257,11 @@ async function runDemo() {
     await sleep(3500);
 
     // STEP 9: DEMONSTRATE STRICT SINGLE SERVING TOKEN RULE
-    await showBanner('Step 9: Concurrency Protection', 'Only ONE token can be served at a time; live elapsed timer actively ticking', 3500);
+    await showBanner('Step 9: Concurrency Lock & Live Timer', 'Strict single-token rule: Call Next locked while service timer is actively ticking', 3500);
     await sleep(1000);
 
     // STEP 10: COMPLETE SERVICE
-    await showBanner('Step 10: Completing Service', 'Marking token COMPLETED and recording service duration metrics');
+    await showBanner('Step 10: Completing Service', 'Marking token COMPLETED and recording exact service duration metrics');
     await clickButtonByText('COMPLETE SERVICE');
     await sleep(2500);
 
@@ -238,10 +273,10 @@ async function runDemo() {
     // STEP 12: CANCEL TOKEN DEMO
     await page.evaluate(() => window.scrollBy({ top: 380, behavior: 'smooth' }));
     await sleep(1000);
-    await showBanner('Step 12: Cancelling a Token', 'Cancelling token with safety confirmation modal');
+    await showBanner('Step 12: Cancelling a Token', 'Cancelling waiting token with safety confirmation modal');
 
     await page.evaluate(() => {
-      const cancelBtns = Array.from(document.querySelectorAll('button[title*="Cancel Token"]'));
+      const cancelBtns = Array.from(document.querySelectorAll('button[title="Cancel Token"]:not([disabled])'));
       if (cancelBtns.length > 0) cancelBtns[cancelBtns.length - 1].click();
     });
     await sleep(1500);
@@ -251,17 +286,20 @@ async function runDemo() {
     await sleep(2200);
 
     // View Completed tab
-    await showBanner('Step 13: Reviewing Completed & Cancelled History', 'Inspecting categorized tabs');
+    await showBanner('Step 13: Reviewing Completed & Cancelled History', 'Inspecting categorized tabs with calculated durations');
     await clickButtonByText('Completed');
     await sleep(2200);
 
     await clickButtonByText('Cancelled');
     await sleep(2200);
 
+    await clickButtonByText('Waiting Queue');
+    await sleep(1500);
+
     // STEP 14: ANALYTICS DASHBOARD WITH CHART.JS
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
     await sleep(1000);
-    await showBanner('Step 14: Performance Analytics & Chart.js Telemetry', 'Navigating to Analytics page');
+    await showBanner('Step 14: Performance Analytics & Chart.js Telemetry', 'Navigating to Analytics page with genuine DB snapshots');
     await clickLinkByText('Analytics');
     await sleep(2500);
 
@@ -273,10 +311,13 @@ async function runDemo() {
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'smooth' }));
     await sleep(1500);
 
-    // STEP 15: MANAGER PROFILE & LOGOUT
-    await showBanner('Step 15: Manager Profile & Security', 'Reviewing manager credentials and secure session protocols');
+    // STEP 15: HELP GUIDE & PROFILE
+    await showBanner('Step 15: Usability & Manager Security', 'Testing Help Guide toggle and manager profile');
+    await clickButtonByText('Help Guide');
+    await sleep(2000);
+
     await clickLinkByText('Profile');
-    await sleep(3000);
+    await sleep(2500);
 
     await showBanner('Demonstration Complete!', 'QueueFlow: Full-Stack Smart Queue Management System', 4000);
     await sleep(3000);
