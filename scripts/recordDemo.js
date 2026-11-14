@@ -1,16 +1,30 @@
 const puppeteer = require('../server/node_modules/puppeteer-core');
 const path = require('path');
+const fs = require('fs');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+// Candidate browser executable paths on Windows
+const BROWSER_PATHS = [
+  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
+  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+];
+
+const BROWSER_PATH = BROWSER_PATHS.find((p) => p && fs.existsSync(p));
 const APP_URL = 'http://localhost:5173';
 
 async function runDemo() {
-  console.log('🎬 Launching Chrome for QueueFlow Video Recording Demo...');
+  if (!BROWSER_PATH) {
+    console.error('❌ Could not locate Google Chrome or Microsoft Edge executable.');
+    process.exit(1);
+  }
+  console.log(`🎬 Launching browser: ${BROWSER_PATH}`);
 
   const browser = await puppeteer.launch({
-    executablePath: CHROME_PATH,
+    executablePath: BROWSER_PATH,
     headless: false,
     defaultViewport: null,
     args: ['--start-maximized', '--disable-infobars', '--no-default-browser-check'],
