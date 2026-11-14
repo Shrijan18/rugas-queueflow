@@ -2,6 +2,11 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const dotenv = require('dotenv');
+const path = require('path');
+
+// Load environment variables from server/.env
+dotenv.config({ path: path.join(__dirname, '.env') });
+
 const { initDb } = require('./config/db');
 const { notFoundHandler, errorHandler } = require('./middleware/errorMiddleware');
 
@@ -12,11 +17,8 @@ const tokenRoutes = require('./routes/tokenRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 
-// Load environment variables
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5002;
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
 // Middleware
@@ -83,4 +85,3 @@ const startServer = async () => {
 startServer();
 
 module.exports = app;
-

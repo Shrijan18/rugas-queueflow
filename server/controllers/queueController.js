@@ -10,42 +10,52 @@ const getQueues = async (req, res, next) => {
   try {
     const managerId = req.manager.id;
 
-    // Fetch queues along with aggregated token metrics
-    const query = `
-      SELECT 
-        q.id,
-        q.name,
-        q.prefix,
-        q.created_at,
-        q.updated_at,
-        COUNT(t.id)::int AS total_tokens,
-        COUNT(CASE WHEN t.status = 'WAITING' THEN 1 END)::int AS waiting_count,
-        COUNT(CASE WHEN t.status = 'SERVING' THEN 1 END)::int AS serving_count,
-        COUNT(CASE WHEN t.status = 'COMPLETED' THEN 1 END)::int AS completed_count,
-        COUNT(CASE WHEN t.status = 'CANCELLED' THEN 1 END)::int AS cancelled_count,
-        (
-          SELECT json_build_object(
-            'id', st.id,
-            'token_number', st.token_number,
-            'person_name', st.person_name,
-            'service_started_at', st.service_started_at
-          )
-          FROM tokens st
-          WHERE st.queue_id = q.id AND st.status = 'SERVING'
-          LIMIT 1
-        ) AS current_serving
-      FROM queues q
-      LEFT JOIN tokens t ON q.id = t.queue_id
-      WHERE q.manager_id = $1
-      GROUP BY q.id
-      ORDER BY q.created_at DESC
-    `;
+    // 1. Fetch queues owned by this manager
+    const queuesRes = await db.query(
+      `SELECT id, manager_id, name, prefix, created_at, updated_at
+       FROM queues
+       WHERE manager_id = $1
+       ORDER BY created_at DESC`,
+      [managerId]
+    );
 
-    const result = await db.query(query, [managerId]);
+    // 2. Fetch all tokens across this manager's queues
+    const tokensRes = await db.query(
+      `SELECT t.id, t.queue_id, t.token_number, t.person_name, t.status, t.service_started_at
+       FROM tokens t
+       JOIN queues q ON t.queue_id = q.id
+       WHERE q.manager_id = $1`,
+      [managerId]
+    );
+
+    const queues = queuesRes.rows.map((q) => {
+      const qTokens = tokensRes.rows.filter((t) => t.queue_id === q.id);
+      const waiting = qTokens.filter((t) => t.status === 'WAITING').length;
+      const serving = qTokens.find((t) => t.status === 'SERVING') || null;
+      const completed = qTokens.filter((t) => t.status === 'COMPLETED').length;
+      const cancelled = qTokens.filter((t) => t.status === 'CANCELLED').length;
+
+      return {
+        ...q,
+        total_tokens: qTokens.length,
+        waiting_count: waiting,
+        serving_count: serving ? 1 : 0,
+        completed_count: completed,
+        cancelled_count: cancelled,
+        current_serving: serving
+          ? {
+              id: serving.id,
+              token_number: serving.token_number,
+              person_name: serving.person_name,
+              service_started_at: serving.service_started_at,
+            }
+          : null,
+      };
+    });
 
     return res.json({
       success: true,
-      queues: result.rows,
+      queues,
     });
   } catch (err) {
     next(err);
@@ -127,32 +137,18 @@ const getQueueById = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid queue ID.' });
     }
 
-    const query = `
-      SELECT 
-        q.id,
-        q.manager_id,
-        q.name,
-        q.prefix,
-        q.created_at,
-        q.updated_at,
-        COUNT(t.id)::int AS total_tokens,
-        COUNT(CASE WHEN t.status = 'WAITING' THEN 1 END)::int AS waiting_count,
-        COUNT(CASE WHEN t.status = 'SERVING' THEN 1 END)::int AS serving_count,
-        COUNT(CASE WHEN t.status = 'COMPLETED' THEN 1 END)::int AS completed_count,
-        COUNT(CASE WHEN t.status = 'CANCELLED' THEN 1 END)::int AS cancelled_count
-      FROM queues q
-      LEFT JOIN tokens t ON q.id = t.queue_id
-      WHERE q.id = $1
-      GROUP BY q.id
-    `;
+    const queueRes = await db.query(
+      `SELECT id, manager_id, name, prefix, created_at, updated_at
+       FROM queues
+       WHERE id = $1`,
+      [queueId]
+    );
 
-    const result = await db.query(query, [queueId]);
-
-    if (result.rows.length === 0) {
+    if (queueRes.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Queue not found.' });
     }
 
-    const queue = result.rows[0];
+    const queue = queueRes.rows[0];
 
     // Ownership check
     if (queue.manager_id !== managerId) {
@@ -162,13 +158,26 @@ const getQueueById = async (req, res, next) => {
       });
     }
 
-    // Fetch currently serving token if present
-    const servingRes = await db.query(
-      `SELECT * FROM tokens WHERE queue_id = $1 AND status = 'SERVING' LIMIT 1`,
+    // Fetch tokens for this queue
+    const tokensRes = await db.query(
+      `SELECT id, token_number, person_name, status, service_started_at
+       FROM tokens
+       WHERE queue_id = $1`,
       [queueId]
     );
 
-    queue.current_serving = servingRes.rows[0] || null;
+    const qTokens = tokensRes.rows;
+    const waiting = qTokens.filter((t) => t.status === 'WAITING').length;
+    const serving = qTokens.find((t) => t.status === 'SERVING') || null;
+    const completed = qTokens.filter((t) => t.status === 'COMPLETED').length;
+    const cancelled = qTokens.filter((t) => t.status === 'CANCELLED').length;
+
+    queue.total_tokens = qTokens.length;
+    queue.waiting_count = waiting;
+    queue.serving_count = serving ? 1 : 0;
+    queue.completed_count = completed;
+    queue.cancelled_count = cancelled;
+    queue.current_serving = serving;
 
     return res.json({
       success: true,
@@ -268,4 +277,3 @@ module.exports = {
   updateQueue,
   deleteQueue,
 };
-
