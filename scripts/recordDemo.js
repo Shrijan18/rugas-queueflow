@@ -55,11 +55,9 @@ async function ensureServicesRunning(maxAttempts = 15) {
     pingUrl(APP_URL),
   ]);
 
-  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-
   if (!backReady) {
     console.log('🚀 Backend (port 5002) is offline. Starting Express server...');
-    const backendProc = spawn(npmCmd, ['run', 'server'], {
+    const backendProc = spawn(process.execPath, [path.join(rootDir, 'server', 'server.js')], {
       cwd: rootDir,
       detached: true,
       stdio: 'ignore',
@@ -71,8 +69,9 @@ async function ensureServicesRunning(maxAttempts = 15) {
 
   if (!frontReady) {
     console.log('🚀 Frontend (port 5173) is offline. Starting Vite client...');
-    const clientProc = spawn(npmCmd, ['run', 'client'], {
+    const clientProc = spawn('npm run client', {
       cwd: rootDir,
+      shell: true,
       detached: true,
       stdio: 'ignore',
     });
