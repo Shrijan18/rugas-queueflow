@@ -16,20 +16,31 @@ const BROWSER_PATHS = [
 
 const BROWSER_PATH = BROWSER_PATHS.find((p) => p && fs.existsSync(p));
 const APP_URL = 'http://localhost:5173';
+const BACKEND_URL = 'http://localhost:5002/api/health';
 
-// Helper to verify frontend is responding before launching browser
-async function waitForServer(url, maxAttempts = 12) {
-  for (let i = 1; i <= maxAttempts; i++) {
-    const isUp = await new Promise((resolve) => {
-      const req = http.get(url, (res) => resolve(res.statusCode < 500));
-      req.on('error', () => resolve(false));
-      req.setTimeout(1500, () => {
-        req.destroy();
-        resolve(false);
-      });
+function pingUrl(url) {
+  return new Promise((resolve) => {
+    const req = http.get(url, (res) => resolve(res.statusCode < 500));
+    req.on('error', () => resolve(false));
+    req.setTimeout(2000, () => {
+      req.destroy();
+      resolve(false);
     });
-    if (isUp) return true;
-    console.log(`⏳ Waiting for QueueFlow frontend (${url}) to respond... attempt ${i}/${maxAttempts}`);
+  });
+}
+
+// Helper to verify both backend and frontend are online before launching browser
+async function waitForServices(maxAttempts = 15) {
+  for (let i = 1; i <= maxAttempts; i++) {
+    const [backReady, frontReady] = await Promise.all([
+      pingUrl(BACKEND_URL),
+      pingUrl(APP_URL),
+    ]);
+    if (backReady && frontReady) {
+      console.log('✅ Both Backend (port 5002) and Frontend (port 5173) are ready.');
+      return true;
+    }
+    console.log(`⏳ Waiting for services: Backend=${backReady ? 'OK' : 'Waiting'}, Frontend=${frontReady ? 'OK' : 'Waiting'} (attempt ${i}/${maxAttempts})...`);
     await sleep(1500);
   }
   return false;
@@ -41,11 +52,11 @@ async function runDemo() {
     process.exit(1);
   }
 
-  console.log(`🔍 Checking if QueueFlow is online at ${APP_URL}...`);
-  const serverReady = await waitForServer(APP_URL);
-  if (!serverReady) {
-    console.error(`❌ Could not connect to QueueFlow at ${APP_URL}.`);
-    console.error('👉 Please start the servers first: "npm run server" and "npm run client"');
+  console.log(`🔍 Checking QueueFlow services (Backend 5002 & Frontend 5173)...`);
+  const servicesReady = await waitForServices();
+  if (!servicesReady) {
+    console.error(`❌ Could not connect to QueueFlow backend or frontend.`);
+    console.error('👉 Please ensure dev servers are running: "npm run server" and "npm run client"');
     process.exit(1);
   }
 
@@ -147,10 +158,21 @@ async function runDemo() {
     // Click Sign In
     await showBanner('Step 1: Signing In...', 'Authenticating via secure JWT HTTP-only cookies');
     await page.click('button[type="submit"]');
-    await sleep(2500);
 
-    // Wait for Dashboard to mount
-    await page.waitForSelector('h1', { timeout: 8000 });
+    // Wait for Dashboard to mount with automatic retry if needed
+    try {
+      await page.waitForSelector('h1', { timeout: 12000 });
+    } catch (e) {
+      console.warn('⚠️ First sign-in wait exceeded, checking page status...');
+      const errEl = await page.$('.bg-rose-50');
+      if (errEl) {
+        const msg = await page.evaluate((el) => el.innerText, errEl);
+        console.warn('Login page reported error:', msg);
+      }
+      await sleep(1500);
+      await page.click('button[type="submit"]');
+      await page.waitForSelector('h1', { timeout: 15000 });
+    }
 
     // STEP 2: DASHBOARD & 6 KPI CARDS
     await showBanner('Step 2: Operational Dashboard', 'Real-time overview with 6 live KPI cards & queue monitor');
