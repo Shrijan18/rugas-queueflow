@@ -1,6 +1,31 @@
 const { validationResult } = require('express-validator');
 const db = require('../config/db');
 
+// In-process lock map per queue to serialize concurrent mutations safely
+const queueLocks = new Map();
+
+const withQueueLock = async (queueId, fn) => {
+  const qId = parseInt(queueId, 10);
+  if (isNaN(qId)) return await fn();
+
+  const currentPromise = queueLocks.get(qId) || Promise.resolve();
+  let release;
+  const nextPromise = new Promise((resolve) => {
+    release = resolve;
+  });
+  queueLocks.set(qId, nextPromise);
+
+  try {
+    await currentPromise;
+    return await fn();
+  } finally {
+    release();
+    if (queueLocks.get(qId) === nextPromise) {
+      queueLocks.delete(qId);
+    }
+  }
+};
+
 /**
  * Helper to verify that a queue belongs to the logged-in manager
  */
@@ -137,128 +162,130 @@ const getQueueTokens = async (req, res, next) => {
  * POST /api/queues/:id/tokens
  */
 const addToken = async (req, res, next) => {
-  const client = await db.getClient();
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      client.release();
-      return res.status(400).json({
-        success: false,
-        message: errors.array()[0].msg,
-      });
-    }
-
-    const queueId = parseInt(req.params.id, 10);
-    const managerId = req.manager.id;
-    const { person_name, phone_number } = req.body;
-
-    // Verify queue ownership
-    const { queue, error, status } = await verifyQueueOwnership(queueId, managerId);
-    if (error) {
-      client.release();
-      return res.status(status).json({ success: false, message: error });
-    }
-
-    await client.query('BEGIN');
-
-    // Queue-level row lock to serialize concurrent additions and token operations
-    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [queueId]);
-
-    // 1. Determine next waiting position
-    const posRes = await client.query(
-      `SELECT COALESCE(MAX(position), 0) AS max_pos 
-       FROM tokens 
-       WHERE queue_id = $1 AND status = 'WAITING'`,
-      [queueId]
-    );
-    const nextPosition = parseInt(posRes.rows[0].max_pos, 10) + 1;
-
-    // 2. Generate unique token number (e.g., Q001, Q002...)
-    // Inspect all existing tokens ever created in this queue to ensure token numbers are NEVER reused
-    const existingTokensRes = await client.query(
-      'SELECT token_number FROM tokens WHERE queue_id = $1',
-      [queueId]
-    );
-
-    let maxNum = 0;
-    for (const r of existingTokensRes.rows) {
-      const digits = (r.token_number || '').replace(/\D/g, '');
-      const parsed = parseInt(digits, 10);
-      if (!isNaN(parsed) && parsed > maxNum) {
-        maxNum = parsed;
+  const queueId = parseInt(req.params.id, 10);
+  return withQueueLock(queueId, async () => {
+    const client = await db.getClient();
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        client.release();
+        return res.status(400).json({
+          success: false,
+          message: errors.array()[0].msg,
+        });
       }
-    }
 
-    let tokenSeq = maxNum + 1;
-    let tokenNumber = `${queue.prefix || 'Q'}${String(tokenSeq).padStart(3, '0')}`;
+      const managerId = req.manager.id;
+      const { person_name, phone_number } = req.body;
 
-    // Ensure absolute token number uniqueness in this queue
-    let exists = await client.query(
-      'SELECT id FROM tokens WHERE queue_id = $1 AND token_number = $2',
-      [queueId, tokenNumber]
-    );
-    while (exists.rows.length > 0) {
-      tokenSeq += 1;
-      tokenNumber = `${queue.prefix || 'Q'}${String(tokenSeq).padStart(3, '0')}`;
-      exists = await client.query(
+      // Verify queue ownership
+      const { queue, error, status } = await verifyQueueOwnership(queueId, managerId);
+      if (error) {
+        client.release();
+        return res.status(status).json({ success: false, message: error });
+      }
+
+      await client.query('BEGIN');
+
+      // Queue-level row lock to serialize concurrent additions and token operations
+      await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [queueId]);
+
+      // 1. Determine next waiting position
+      const posRes = await client.query(
+        `SELECT COALESCE(MAX(position), 0) AS max_pos 
+         FROM tokens 
+         WHERE queue_id = $1 AND status = 'WAITING'`,
+        [queueId]
+      );
+      const nextPosition = parseInt(posRes.rows[0].max_pos, 10) + 1;
+
+      // 2. Generate unique token number (e.g., Q001, Q002...)
+      // Inspect all existing tokens ever created in this queue to ensure token numbers are NEVER reused
+      const existingTokensRes = await client.query(
+        'SELECT token_number FROM tokens WHERE queue_id = $1',
+        [queueId]
+      );
+
+      let maxNum = 0;
+      for (const r of existingTokensRes.rows) {
+        const digits = (r.token_number || '').replace(/\D/g, '');
+        const parsed = parseInt(digits, 10);
+        if (!isNaN(parsed) && parsed > maxNum) {
+          maxNum = parsed;
+        }
+      }
+
+      let tokenSeq = maxNum + 1;
+      let tokenNumber = `${queue.prefix || 'Q'}${String(tokenSeq).padStart(3, '0')}`;
+
+      // Ensure absolute token number uniqueness in this queue
+      let exists = await client.query(
         'SELECT id FROM tokens WHERE queue_id = $1 AND token_number = $2',
         [queueId, tokenNumber]
       );
+      while (exists.rows.length > 0) {
+        tokenSeq += 1;
+        tokenNumber = `${queue.prefix || 'Q'}${String(tokenSeq).padStart(3, '0')}`;
+        exists = await client.query(
+          'SELECT id FROM tokens WHERE queue_id = $1 AND token_number = $2',
+          [queueId, tokenNumber]
+        );
+      }
+
+      // 3. Insert new token
+      const insertRes = await client.query(
+        `INSERT INTO tokens (
+          queue_id, token_number, person_name, phone_number, position, status
+        )
+        VALUES ($1, $2, $3, $4, $5, 'WAITING')
+        RETURNING *`,
+        [queueId, tokenNumber, person_name.trim(), phone_number?.trim() || null, nextPosition]
+      );
+
+      const newToken = insertRes.rows[0];
+
+      // 4. Log queue activity
+      await client.query(
+        `INSERT INTO queue_activity (queue_id, token_id, activity_type, details)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          queueId,
+          newToken.id,
+          'TOKEN_CREATED',
+          `Token ${tokenNumber} added for ${person_name.trim()} at position ${nextPosition}`,
+        ]
+      );
+
+      // 5. Update queue snapshot
+      const waitingCountRes = await client.query(
+        `SELECT COUNT(*)::int AS cnt FROM tokens WHERE queue_id = $1 AND status = 'WAITING'`,
+        [queueId]
+      );
+      await client.query(
+        `INSERT INTO queue_snapshots (queue_id, waiting_count, serving_count)
+         VALUES ($1, $2, (SELECT COUNT(*)::int FROM tokens WHERE queue_id = $1 AND status = 'SERVING'))`,
+        [queueId, waitingCountRes.rows[0].cnt]
+      );
+
+      await client.query('COMMIT');
+      client.release();
+
+      return res.status(201).json({
+        success: true,
+        message: `Token ${tokenNumber} created successfully for ${person_name.trim()}.`,
+        token: {
+          ...newToken,
+          estimated_waiting_minutes: calculateEstimatedWaitMinutes(nextPosition),
+        },
+      });
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {}
+      client.release();
+      next(err);
     }
-
-    // 3. Insert new token
-    const insertRes = await client.query(
-      `INSERT INTO tokens (
-        queue_id, token_number, person_name, phone_number, position, status
-      )
-      VALUES ($1, $2, $3, $4, $5, 'WAITING')
-      RETURNING *`,
-      [queueId, tokenNumber, person_name.trim(), phone_number?.trim() || null, nextPosition]
-    );
-
-    const newToken = insertRes.rows[0];
-
-    // 4. Log queue activity
-    await client.query(
-      `INSERT INTO queue_activity (queue_id, token_id, activity_type, details)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        queueId,
-        newToken.id,
-        'TOKEN_CREATED',
-        `Token ${tokenNumber} added for ${person_name.trim()} at position ${nextPosition}`,
-      ]
-    );
-
-    // 5. Update queue snapshot
-    const waitingCountRes = await client.query(
-      `SELECT COUNT(*)::int AS cnt FROM tokens WHERE queue_id = $1 AND status = 'WAITING'`,
-      [queueId]
-    );
-    await client.query(
-      `INSERT INTO queue_snapshots (queue_id, waiting_count, serving_count)
-       VALUES ($1, $2, (SELECT COUNT(*)::int FROM tokens WHERE queue_id = $1 AND status = 'SERVING'))`,
-      [queueId, waitingCountRes.rows[0].cnt]
-    );
-
-    await client.query('COMMIT');
-    client.release();
-
-    return res.status(201).json({
-      success: true,
-      message: `Token ${tokenNumber} created successfully for ${person_name.trim()}.`,
-      token: {
-        ...newToken,
-        estimated_waiting_minutes: calculateEstimatedWaitMinutes(nextPosition),
-      },
-    });
-  } catch (err) {
-    try {
-      await client.query('ROLLBACK');
-    } catch (_) {}
-    client.release();
-    next(err);
-  }
+  });
 };
 
 /**
@@ -500,122 +527,124 @@ const moveTokenDown = async (req, res, next) => {
  * PUT /api/queues/:id/call-next
  */
 const callNextToken = async (req, res, next) => {
-  const client = await db.getClient();
-  try {
-    const queueId = parseInt(req.params.id, 10);
-    const managerId = req.manager.id;
-
-    // Verify ownership
-    const { queue, error, status } = await verifyQueueOwnership(queueId, managerId);
-    if (error) {
-      client.release();
-      return res.status(status).json({ success: false, message: error });
-    }
-
-    await client.query('BEGIN');
-
-    // Row-level lock on the queue to strictly prevent concurrent calls
-    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [queueId]);
-
-    // 1. Check if there is already an active SERVING token in this queue
-    const activeServing = await client.query(
-      `SELECT id, token_number, person_name, service_started_at 
-       FROM tokens 
-       WHERE queue_id = $1 AND status = 'SERVING'`,
-      [queueId]
-    );
-
-    if (activeServing.rows.length > 0) {
-      await client.query('ROLLBACK');
-      client.release();
-      const current = activeServing.rows[0];
-      return res.status(400).json({
-        success: false,
-        message: `Cannot call next token: Token ${current.token_number} (${current.person_name}) is currently being served. Complete or cancel this service first.`,
-        currentServing: current,
-      });
-    }
-
-    // 2. Select first waiting token by position
-    const firstWaiting = await client.query(
-      `SELECT * FROM tokens 
-       WHERE queue_id = $1 AND status = 'WAITING' 
-       ORDER BY position ASC 
-       LIMIT 1`,
-      [queueId]
-    );
-
-    if (firstWaiting.rows.length === 0) {
-      await client.query('ROLLBACK');
-      client.release();
-      return res.status(400).json({
-        success: false,
-        message: 'No waiting tokens available in this queue.',
-      });
-    }
-
-    const tokenToServe = firstWaiting.rows[0];
-
-    // 3. Mark token as SERVING
-    const updateRes = await client.query(
-      `UPDATE tokens 
-       SET status = 'SERVING',
-           called_at = CURRENT_TIMESTAMP,
-           service_started_at = CURRENT_TIMESTAMP,
-           position = NULL
-       WHERE id = $1
-       RETURNING *`,
-      [tokenToServe.id]
-    );
-
-    const servingToken = updateRes.rows[0];
-
-    // 4. Shift positions of all subsequent waiting tokens: position = position - 1
-    await client.query(
-      `UPDATE tokens 
-       SET position = position - 1 
-       WHERE queue_id = $1 AND status = 'WAITING'`,
-      [queueId]
-    );
-
-    // 5. Log activity
-    await client.query(
-      `INSERT INTO queue_activity (queue_id, token_id, activity_type, details)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        queueId,
-        servingToken.id,
-        'TOKEN_CALLED',
-        `Called Token ${servingToken.token_number} (${servingToken.person_name}) for service.`,
-      ]
-    );
-
-    // 6. Record snapshot
-    const waitingCountRes = await client.query(
-      `SELECT COUNT(*)::int AS cnt FROM tokens WHERE queue_id = $1 AND status = 'WAITING'`,
-      [queueId]
-    );
-    await client.query(
-      `INSERT INTO queue_snapshots (queue_id, waiting_count, serving_count)
-       VALUES ($1, $2, 1)`,
-      [queueId, waitingCountRes.rows[0].cnt]
-    );
-
-    await client.query('COMMIT');
-    client.release();
-
-    return res.json({
-      success: true,
-      message: `Now serving Token ${servingToken.token_number} - ${servingToken.person_name}.`,
-      token: servingToken,
-    });
-  } catch (err) {
+  const queueId = parseInt(req.params.id, 10);
+  return withQueueLock(queueId, async () => {
+    const client = await db.getClient();
     try {
-      await client.query('ROLLBACK');
-    } catch (_) {}
-    client.release();
-    next(err);
-  }
+      const managerId = req.manager.id;
+
+      // Verify ownership
+      const { queue, error, status } = await verifyQueueOwnership(queueId, managerId);
+      if (error) {
+        client.release();
+        return res.status(status).json({ success: false, message: error });
+      }
+
+      await client.query('BEGIN');
+
+      // Row-level lock on the queue to strictly prevent concurrent calls
+      await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [queueId]);
+
+      // 1. Check if there is already an active SERVING token in this queue
+      const activeServing = await client.query(
+        `SELECT id, token_number, person_name, service_started_at 
+         FROM tokens 
+         WHERE queue_id = $1 AND status = 'SERVING'`,
+        [queueId]
+      );
+
+      if (activeServing.rows.length > 0) {
+        await client.query('ROLLBACK');
+        client.release();
+        const current = activeServing.rows[0];
+        return res.status(400).json({
+          success: false,
+          message: `Cannot call next token: Token ${current.token_number} (${current.person_name}) is currently being served. Complete or cancel this service first.`,
+          currentServing: current,
+        });
+      }
+
+      // 2. Select first waiting token by position
+      const firstWaiting = await client.query(
+        `SELECT * FROM tokens 
+         WHERE queue_id = $1 AND status = 'WAITING' 
+         ORDER BY position ASC 
+         LIMIT 1`,
+        [queueId]
+      );
+
+      if (firstWaiting.rows.length === 0) {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(400).json({
+          success: false,
+          message: 'No waiting tokens available in this queue.',
+        });
+      }
+
+      const tokenToServe = firstWaiting.rows[0];
+
+      // 3. Mark token as SERVING
+      const updateRes = await client.query(
+        `UPDATE tokens 
+         SET status = 'SERVING',
+             called_at = CURRENT_TIMESTAMP,
+             service_started_at = CURRENT_TIMESTAMP,
+             position = NULL
+         WHERE id = $1
+         RETURNING *`,
+        [tokenToServe.id]
+      );
+
+      const servingToken = updateRes.rows[0];
+
+      // 4. Shift positions of all subsequent waiting tokens: position = position - 1
+      await client.query(
+        `UPDATE tokens 
+         SET position = position - 1 
+         WHERE queue_id = $1 AND status = 'WAITING'`,
+        [queueId]
+      );
+
+      // 5. Log activity
+      await client.query(
+        `INSERT INTO queue_activity (queue_id, token_id, activity_type, details)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          queueId,
+          servingToken.id,
+          'TOKEN_CALLED',
+          `Called Token ${servingToken.token_number} (${servingToken.person_name}) for service.`,
+        ]
+      );
+
+      // 6. Record snapshot
+      const waitingCountRes = await client.query(
+        `SELECT COUNT(*)::int AS cnt FROM tokens WHERE queue_id = $1 AND status = 'WAITING'`,
+        [queueId]
+      );
+      await client.query(
+        `INSERT INTO queue_snapshots (queue_id, waiting_count, serving_count)
+         VALUES ($1, $2, 1)`,
+        [queueId, waitingCountRes.rows[0].cnt]
+      );
+
+      await client.query('COMMIT');
+      client.release();
+
+      return res.json({
+        success: true,
+        message: `Now serving Token ${servingToken.token_number} - ${servingToken.person_name}.`,
+        token: servingToken,
+      });
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {}
+      client.release();
+      next(err);
+    }
+  });
 };
 
 /**

@@ -131,9 +131,9 @@ const initDb = async () => {
     await seedDemoData(pool);
     return pool;
   } catch (err) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error(`❌ [Database] Production PostgreSQL connection failed: ${err.message}`);
-      throw new Error(`Production database connection failed: ${err.message}. Silent in-memory fallback is disabled in production.`);
+    if (process.env.NODE_ENV === 'production' || process.env.FORCE_POSTGRES === 'true') {
+      console.error(`❌ [Database] PostgreSQL connection failed: ${err.message}`);
+      throw new Error(`Database connection failed: ${err.message}. Silent in-memory fallback is disabled in production / FORCE_POSTGRES.`);
     }
 
     console.warn(`⚠️ [Database] Live PostgreSQL connection failed (${err.message}).`);
