@@ -41,7 +41,7 @@ flowchart TD
     Router["React Router DOM (Protected Routes)"]
     AxiosService["Axios API Client (withCredentials: true)"]
     
-    ExpressApp["Express.js Server (Port 5000)"]
+    ExpressApp["Express.js Server (Port 5002)"]
     AuthMiddleware["Auth Middleware (JWT in HTTP-Only Cookie)"]
     Controllers["Express Controllers (Auth, Queue, Token, Analytics)"]
     
@@ -220,7 +220,7 @@ cd ../client && npm install
 Create `.env` inside `server/`:
 ```bash
 # In server/.env
-PORT=5000
+PORT=5002
 NODE_ENV=development
 CLIENT_URL=http://localhost:5173
 JWT_SECRET=queueflow_super_secret_jwt_key_2026_dev
@@ -244,7 +244,7 @@ In separate terminal windows (or using the root script):
 ```bash
 cd server
 npm run dev
-# Server starts at http://localhost:5000
+# Server starts at http://localhost:5002
 ```
 
 **Terminal 2 (Frontend Client):**
