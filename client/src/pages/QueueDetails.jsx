@@ -16,6 +16,7 @@ import {
   ChevronRight,
   History
 } from 'lucide-react';
+import { toast } from 'react-toastify';
 import api from '../services/api';
 import TokenTable from '../components/TokenTable';
 import AddTokenModal from '../components/AddTokenModal';
@@ -76,6 +77,7 @@ const QueueDetails = () => {
       }
     } catch (err) {
       console.error('Failed to load queue details:', err);
+      toast.error('Failed to load queue details');
     } finally {
       setLoading(false);
     }
@@ -83,18 +85,29 @@ const QueueDetails = () => {
 
   // Add person to queue
   const handleAddToken = async (data) => {
-    await api.post(`/queues/${id}/tokens`, data);
-    await fetchQueueDetails();
+    try {
+      setActionLoading(true);
+      const res = await api.post(`/queues/${id}/tokens`, data);
+      toast.success(res.data?.message || 'Person added to queue!');
+      setIsAddModalOpen(false);
+      await fetchQueueDetails();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to add person to queue');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   // Move token up
   const handleMoveUp = async (tokenId) => {
+    if (actionLoading) return;
     try {
       setActionLoading(true);
-      await api.put(`/tokens/${tokenId}/move-up`);
+      const res = await api.put(`/tokens/${tokenId}/move-up`);
+      toast.success(res.data?.message || 'Token moved up');
       await fetchQueueDetails();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to move token up');
+      toast.error(err.response?.data?.message || 'Failed to move token up');
     } finally {
       setActionLoading(false);
     }
@@ -102,12 +115,14 @@ const QueueDetails = () => {
 
   // Move token down
   const handleMoveDown = async (tokenId) => {
+    if (actionLoading) return;
     try {
       setActionLoading(true);
-      await api.put(`/tokens/${tokenId}/move-down`);
+      const res = await api.put(`/tokens/${tokenId}/move-down`);
+      toast.success(res.data?.message || 'Token moved down');
       await fetchQueueDetails();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to move token down');
+      toast.error(err.response?.data?.message || 'Failed to move token down');
     } finally {
       setActionLoading(false);
     }
@@ -115,21 +130,23 @@ const QueueDetails = () => {
 
   // Call next waiting token
   const handleCallNext = async () => {
+    if (actionLoading) return;
     if (servingToken) {
-      alert(`Cannot call next: Token ${servingToken.token_number} is already being served. Please complete current service first.`);
+      toast.warning(`Cannot call next: Token ${servingToken.token_number} is already being served.`);
       return;
     }
     if (waitingTokens.length === 0) {
-      alert('No waiting tokens available in this queue.');
+      toast.info('No waiting tokens available in this queue.');
       return;
     }
 
     try {
       setActionLoading(true);
-      await api.put(`/queues/${id}/call-next`);
+      const res = await api.put(`/queues/${id}/call-next`);
+      toast.success(res.data?.message || 'Called next token for service!');
       await fetchQueueDetails();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to call next token');
+      toast.error(err.response?.data?.message || 'Failed to call next token');
     } finally {
       setActionLoading(false);
     }
@@ -137,13 +154,14 @@ const QueueDetails = () => {
 
   // Complete current service
   const handleCompleteService = async () => {
-    if (!servingToken) return;
+    if (actionLoading || !servingToken) return;
     try {
       setActionLoading(true);
-      await api.put(`/tokens/${servingToken.id}/complete`);
+      const res = await api.put(`/tokens/${servingToken.id}/complete`);
+      toast.success(res.data?.message || `Service completed for Token ${servingToken.token_number}!`);
       await fetchQueueDetails();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to complete service');
+      toast.error(err.response?.data?.message || 'Failed to complete service');
     } finally {
       setActionLoading(false);
     }
@@ -151,14 +169,15 @@ const QueueDetails = () => {
 
   // Cancel token confirmation
   const handleCancelConfirm = async () => {
-    if (!cancellingToken) return;
+    if (actionLoading || !cancellingToken) return;
     try {
       setActionLoading(true);
-      await api.put(`/tokens/${cancellingToken.id}/cancel`);
+      const res = await api.put(`/tokens/${cancellingToken.id}/cancel`);
+      toast.success(res.data?.message || `Token ${cancellingToken.token_number} cancelled.`);
       setCancellingToken(null);
       await fetchQueueDetails();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to cancel token');
+      toast.error(err.response?.data?.message || 'Failed to cancel token');
     } finally {
       setActionLoading(false);
     }
@@ -294,42 +313,45 @@ const QueueDetails = () => {
           {/* Action Buttons for Service Counter */}
           <div className="relative z-10 pt-4 border-t border-white/10 flex flex-wrap items-center gap-3">
             {servingToken ? (
-              <>
+              <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={handleCompleteService}
                   disabled={actionLoading}
-                  className="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm shadow-lg shadow-emerald-500/30 flex items-center space-x-2 transition-all active:scale-95"
+                  className="px-6 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm shadow-lg shadow-emerald-500/30 flex items-center space-x-2 transition-all active:scale-95 cursor-pointer ring-2 ring-emerald-300/40"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>COMPLETE SERVICE</span>
+                  <span>{actionLoading ? 'COMPLETING...' : 'COMPLETE SERVICE'}</span>
                 </button>
-                <button
-                  onClick={() => setCancellingToken(servingToken)}
-                  disabled={actionLoading}
-                  className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-rose-300 font-semibold text-xs border border-white/10 transition-colors"
-                >
-                  Cancel Service
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={handleCallNext}
-                disabled={waitingTokens.length === 0 || actionLoading}
-                className={`px-6 py-3.5 rounded-xl text-white font-bold text-sm flex items-center space-x-2 transition-all shadow-lg ${
-                  waitingTokens.length > 0
-                    ? 'bg-brand-600 hover:bg-brand-500 shadow-brand-600/40 active:scale-95'
-                    : 'bg-slate-700/60 opacity-60 cursor-not-allowed shadow-none'
-                }`}
-              >
-                <Play className="w-4 h-4 fill-current" />
-                <span>CALL NEXT TOKEN</span>
-              </button>
-            )}
 
-            {waitingTokens.length === 0 && !servingToken && (
-              <span className="text-xs text-slate-400 italic">
-                Waiting queue is currently empty.
-              </span>
+                <div 
+                  className="px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-slate-400 font-semibold text-xs flex items-center space-x-2 cursor-not-allowed select-none"
+                  title="Counter busy: Please complete current service before calling the next token."
+                >
+                  <Play className="w-3.5 h-3.5 opacity-40" />
+                  <span>CALL NEXT (Locked: Service in Progress)</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={handleCallNext}
+                  disabled={waitingTokens.length === 0 || actionLoading}
+                  className={`px-6 py-3.5 rounded-xl text-white font-bold text-sm flex items-center space-x-2 transition-all shadow-lg ${
+                    waitingTokens.length > 0 && !actionLoading
+                      ? 'bg-brand-600 hover:bg-brand-500 shadow-brand-600/40 active:scale-95 cursor-pointer ring-2 ring-brand-400/50'
+                      : 'bg-slate-800/80 text-slate-400 border border-slate-700/60 opacity-60 cursor-not-allowed shadow-none'
+                  }`}
+                >
+                  <Play className={`w-4 h-4 fill-current ${actionLoading ? 'animate-spin' : ''}`} />
+                  <span>{actionLoading ? 'SUMMONING...' : 'CALL NEXT TOKEN'}</span>
+                </button>
+
+                {waitingTokens.length === 0 && (
+                  <span className="text-xs text-amber-200/80 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg">
+                    Waiting queue is currently empty. Add a person above to issue tokens.
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>

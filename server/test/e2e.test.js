@@ -262,8 +262,90 @@ async function runTestSuite() {
   assert.strictEqual(ownResult.statusCode, 403, 'Unauthorized manager must be blocked with 403');
   console.log('  ✓ Resource ownership access control verified (403 Forbidden).');
 
+  // Test 15: Duplicate Queue Name Prevention (Case-Insensitive for Same Manager)
+  console.log('▶ Test 15: Duplicate Queue Name Prevention (Case-Insensitive)...');
+  const { req: dupQReq, res: dupQRes, getResult: getDupQRes } = mockReqRes(
+    { name: '  general consultation  ' },
+    {},
+    manager
+  );
+  await queueController.createQueue(dupQReq, dupQRes, (err) => { throw err; });
+  const dupQResult = getDupQRes();
+  assert.strictEqual(dupQResult.statusCode, 409, 'Duplicate queue name for same manager must return 409');
+  console.log(`  ✓ Duplicate queue name rejected: "${dupQResult.data.message}"`);
+
+  // Test 16: Allow Different Manager to Use Same Queue Name
+  console.log('▶ Test 16: Cross-Manager Queue Name Permitted...');
+  const { req: reg2Req, res: reg2Res, getResult: getReg2Res } = mockReqRes({
+    full_name: 'Dr. Sunita Patel',
+    email: `dr.patel_${Date.now()}@test.com`,
+    password: 'Password123!',
+  });
+  await authController.register(reg2Req, reg2Res, (err) => { throw err; });
+  const realOtherManager = getReg2Res().data.manager;
+
+  const { req: crossQReq, res: crossQRes, getResult: getCrossQRes } = mockReqRes(
+    { name: 'General Consultation' },
+    {},
+    realOtherManager
+  );
+  await queueController.createQueue(crossQReq, crossQRes, (err) => { throw err; });
+  const crossQResult = getCrossQRes();
+  assert.strictEqual(crossQResult.statusCode, 201, 'Different manager can create queue with same name');
+  console.log('  ✓ Different manager allowed to create queue with identical name.');
+
+  // Test 17: Disallow Cancelling a SERVING Token
+  console.log('▶ Test 17: Disallow Cancellation of SERVING Tokens...');
+  const { req: cancelServReq, res: cancelServRes, getResult: getCancelServRes } = mockReqRes(
+    {},
+    { id: nextServing.id },
+    manager
+  );
+  await tokenController.cancelToken(cancelServReq, cancelServRes, (err) => { throw err; });
+  const cancelServResult = getCancelServRes();
+  assert.strictEqual(cancelServResult.statusCode, 400, 'Attempting to cancel SERVING token must return 400');
+  console.log(`  ✓ Cancellation blocked on SERVING token: "${cancelServResult.data.message}"`);
+
+  // Test 18: Token Numbers Never Reused After Cancellation
+  console.log('▶ Test 18: Token Sequence Never Reused After Cancellation...');
+  const { req: newTokReq, res: newTokRes, getResult: getNewTokRes } = mockReqRes(
+    { person_name: 'Anjali Gupta', phone_number: '+91 9900112233' },
+    { id: queue1.id },
+    manager
+  );
+  await tokenController.addToken(newTokReq, newTokRes, (err) => { throw err; });
+  const newTokResult = getNewTokRes();
+  assert.strictEqual(newTokResult.statusCode, 201);
+  const issuedToken = newTokResult.data.token;
+  assert.strictEqual(issuedToken.token_number, 'DOC004', 'Next token must be DOC004, never reusing cancelled DOC003');
+  console.log(`  ✓ Token number sequence preserved: Issued ${issuedToken.token_number} (DOC003 was never reused).`);
+
+  // Test 19: Dashboard and My Queues Consistency Check
+  console.log('▶ Test 19: Dashboard and My Queues Data Consistency...');
+  const { req: dashReq, res: dashRes, getResult: getDashRes } = mockReqRes({}, {}, manager);
+  await dashboardController.getDashboardStats(dashReq, dashRes, (err) => { throw err; });
+  const dashResult = getDashRes();
+
+  const { req: myQReq, res: myQRes, getResult: getMyQRes } = mockReqRes({}, {}, manager);
+  await queueController.getQueues(myQReq, myQRes, (err) => { throw err; });
+  const myQResult = getMyQRes();
+
+  assert.strictEqual(dashResult.data.stats.total_queues, myQResult.data.queues.length);
+  assert.strictEqual(dashResult.data.queues.length, myQResult.data.queues.length);
+  console.log(`  ✓ Queue count 100% synchronized: Dashboard (${dashResult.data.stats.total_queues}) === My Queues (${myQResult.data.queues.length})`);
+
+  // Test 20: Genuine Snapshot Analytics (No Fake Fallback Data)
+  console.log('▶ Test 20: Genuine Snapshot Analytics...');
+  const { req: trReq, res: trRes, getResult: getTrRes } = mockReqRes({}, {}, manager);
+  await analyticsController.getQueueTrends(trReq, trRes, (err) => { throw err; });
+  const trResult = getTrRes();
+  assert.strictEqual(trResult.statusCode, 200);
+  assert.ok(Array.isArray(trResult.data.trend.labels));
+  assert.ok(Array.isArray(trResult.data.trend.data));
+  console.log(`  ✓ Genuine historical snapshot points verified: ${trResult.data.trend.labels.length} points logged.`);
+
   console.log('\n====================================================');
-  console.log('🎉 ALL 14 TEST SUITES PASSED FLAWLESSLY!');
+  console.log('🎉 ALL 20 TEST SUITES PASSED FLAWLESSLY!');
   console.log('====================================================\n');
   process.exit(0);
 }

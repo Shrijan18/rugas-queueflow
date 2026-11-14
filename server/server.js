@@ -21,16 +21,28 @@ const app = express();
 const PORT = process.env.PORT || 5002;
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+].filter(Boolean);
+
 // Middleware
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow local development ports and matching client URL
-      if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-        callback(null, true);
-      } else {
-        callback(null, true);
+      // Allow requests with no origin (e.g. mobile apps, curl, or postman)
+      if (!origin) return callback(null, true);
+
+      if (
+        allowedOrigins.includes(origin) ||
+        (process.env.NODE_ENV !== 'production' &&
+          (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')))
+      ) {
+        return callback(null, true);
       }
+      return callback(new Error(`CORS blocked: Origin ${origin} is not allowed.`));
     },
     credentials: true,
   })

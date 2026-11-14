@@ -161,6 +161,9 @@ const addToken = async (req, res, next) => {
 
     await client.query('BEGIN');
 
+    // Queue-level row lock to serialize concurrent additions and token operations
+    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [queueId]);
+
     // 1. Determine next waiting position
     const posRes = await client.query(
       `SELECT COALESCE(MAX(position), 0) AS max_pos 
@@ -171,14 +174,25 @@ const addToken = async (req, res, next) => {
     const nextPosition = parseInt(posRes.rows[0].max_pos, 10) + 1;
 
     // 2. Generate unique token number (e.g., Q001, Q002...)
-    const countRes = await client.query(
-      'SELECT COUNT(*)::int AS total FROM tokens WHERE queue_id = $1',
+    // Inspect all existing tokens ever created in this queue to ensure token numbers are NEVER reused
+    const existingTokensRes = await client.query(
+      'SELECT token_number FROM tokens WHERE queue_id = $1',
       [queueId]
     );
-    let tokenSeq = countRes.rows[0].total + 1;
+
+    let maxNum = 0;
+    for (const r of existingTokensRes.rows) {
+      const digits = (r.token_number || '').replace(/\D/g, '');
+      const parsed = parseInt(digits, 10);
+      if (!isNaN(parsed) && parsed > maxNum) {
+        maxNum = parsed;
+      }
+    }
+
+    let tokenSeq = maxNum + 1;
     let tokenNumber = `${queue.prefix || 'Q'}${String(tokenSeq).padStart(3, '0')}`;
 
-    // Ensure token number uniqueness in this queue
+    // Ensure absolute token number uniqueness in this queue
     let exists = await client.query(
       'SELECT id FROM tokens WHERE queue_id = $1 AND token_number = $2',
       [queueId, tokenNumber]
@@ -281,6 +295,9 @@ const moveTokenUp = async (req, res, next) => {
       client.release();
       return res.status(403).json({ success: false, message: 'Access denied.' });
     }
+
+    // Lock the queue row to serialize reordering operations
+    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [currentToken.queue_id]);
 
     if (currentToken.status !== 'WAITING') {
       await client.query('ROLLBACK');
@@ -390,6 +407,9 @@ const moveTokenDown = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
+    // Lock the queue row to serialize reordering operations
+    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [currentToken.queue_id]);
+
     if (currentToken.status !== 'WAITING') {
       await client.query('ROLLBACK');
       client.release();
@@ -493,6 +513,9 @@ const callNextToken = async (req, res, next) => {
     }
 
     await client.query('BEGIN');
+
+    // Row-level lock on the queue to strictly prevent concurrent calls
+    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [queueId]);
 
     // 1. Check if there is already an active SERVING token in this queue
     const activeServing = await client.query(
@@ -630,6 +653,9 @@ const completeService = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
+    // Lock the queue row
+    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [token.queue_id]);
+
     if (token.status !== 'SERVING') {
       await client.query('ROLLBACK');
       client.release();
@@ -737,12 +763,16 @@ const cancelToken = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Access denied.' });
     }
 
-    if (token.status === 'COMPLETED' || token.status === 'CANCELLED') {
+    // Lock the queue row to serialize cancellation and position re-indexing
+    await client.query('SELECT id FROM queues WHERE id = $1 FOR UPDATE', [token.queue_id]);
+
+    // Strictly enforce: Only WAITING tokens can be cancelled (cannot cancel SERVING or COMPLETED tokens)
+    if (token.status !== 'WAITING') {
       await client.query('ROLLBACK');
       client.release();
       return res.status(400).json({
         success: false,
-        message: `Token is already ${token.status}. It cannot be cancelled again.`,
+        message: `Token status is "${token.status}". Only tokens in WAITING status can be cancelled.`,
       });
     }
 

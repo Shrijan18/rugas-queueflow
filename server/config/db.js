@@ -27,6 +27,11 @@ const schemaSql = fs.existsSync(schemaPath) ? fs.readFileSync(schemaPath, 'utf8'
  * Seed initial demo manager and sample queues if database is empty
  */
 const seedDemoData = async (targetPool) => {
+  // Do not seed demo accounts in production
+  if (process.env.NODE_ENV === 'production' || process.env.SEED_DEMO_DATA === 'false') {
+    return;
+  }
+
   try {
     const check = await targetPool.query('SELECT COUNT(*)::int AS cnt FROM managers');
     if (check.rows[0].cnt === 0) {
@@ -126,8 +131,13 @@ const initDb = async () => {
     await seedDemoData(pool);
     return pool;
   } catch (err) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error(`❌ [Database] Production PostgreSQL connection failed: ${err.message}`);
+      throw new Error(`Production database connection failed: ${err.message}. Silent in-memory fallback is disabled in production.`);
+    }
+
     console.warn(`⚠️ [Database] Live PostgreSQL connection failed (${err.message}).`);
-    console.log('⚡ [Database] Initializing embedded in-memory PostgreSQL engine (pg-mem) for immediate testing...');
+    console.log('⚡ [Database] Development mode: Initializing embedded in-memory PostgreSQL engine (pg-mem) for immediate zero-setup testing...');
 
     try {
       const { newDb } = require('pg-mem');
@@ -138,6 +148,11 @@ const initDb = async () => {
       memDb.public.registerFunction({
         name: 'current_timestamp',
         implementation: () => new Date(),
+      });
+
+      memDb.public.registerFunction({
+        name: 'trim',
+        implementation: (str) => (str ? String(str).trim() : ''),
       });
 
       const sanitizedSchema = schemaSql

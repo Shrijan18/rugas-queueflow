@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS queues (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Unique queue name per manager (case-insensitive)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_queue_name_per_manager 
+    ON queues (manager_id, LOWER(name));
+
 -- 3. Tokens Table
 CREATE TABLE IF NOT EXISTS tokens (
     id SERIAL PRIMARY KEY,

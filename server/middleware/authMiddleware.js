@@ -1,6 +1,11 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
+// Enforce JWT_SECRET in production; require environment variable
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || 'queueflow_super_secret_jwt_key_2026_dev';
 
 /**

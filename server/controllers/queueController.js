@@ -79,6 +79,20 @@ const createQueue = async (req, res, next) => {
     const managerId = req.manager.id;
     const { name, prefix } = req.body;
     const cleanName = name.trim();
+
+    // Prevent duplicate queue names for the same manager (case-insensitive)
+    const duplicateCheck = await db.query(
+      'SELECT id FROM queues WHERE manager_id = $1 AND LOWER(name) = $2',
+      [managerId, cleanName.toLowerCase()]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: `You already have an active queue named "${cleanName}". Please use a different name.`,
+      });
+    }
+
     // Default prefix to first letter uppercase or 'Q'
     const queuePrefix = (prefix || cleanName.charAt(0) || 'Q').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'Q';
 
@@ -216,19 +230,34 @@ const updateQueue = async (req, res, next) => {
     }
 
     const oldName = check.rows[0].name;
+    const cleanName = name.trim();
+
+    // Prevent duplicate queue name for this manager (case-insensitive, excluding current queue)
+    const duplicateCheck = await db.query(
+      'SELECT id FROM queues WHERE manager_id = $1 AND LOWER(name) = $2 AND id != $3',
+      [managerId, cleanName.toLowerCase(), queueId]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: `You already have an active queue named "${cleanName}". Please choose a different name.`,
+      });
+    }
+
     const updated = await db.query(
       `UPDATE queues 
        SET name = $1, updated_at = CURRENT_TIMESTAMP
        WHERE id = $2
        RETURNING id, manager_id, name, prefix, created_at, updated_at`,
-      [name.trim(), queueId]
+      [cleanName, queueId]
     );
 
     // Log activity
     await db.query(
       `INSERT INTO queue_activity (queue_id, activity_type, details)
        VALUES ($1, $2, $3)`,
-      [queueId, 'QUEUE_RENAMED', `Queue renamed from "${oldName}" to "${name.trim()}".`]
+      [queueId, 'QUEUE_RENAMED', `Queue renamed from "${oldName}" to "${cleanName}".`]
     );
 
     return res.json({

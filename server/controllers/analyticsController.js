@@ -24,12 +24,13 @@ const getAnalyticsOverview = async (req, res, next) => {
 
     const counts = countsRes.rows[0] || {};
 
-    // 2. Average Waiting Time (difference between called_at/service_started_at and created_at)
+    // 2. Average Waiting Time: Service Start Time - Token Creation Time for COMPLETED service records
     const waitTokensRes = await db.query(
-      `SELECT t.created_at, t.called_at, t.service_started_at
+      `SELECT t.created_at, t.service_started_at, t.called_at
        FROM queues q
        JOIN tokens t ON q.id = t.queue_id
        WHERE q.manager_id = $1 
+         AND t.status = 'COMPLETED'
          AND (t.service_started_at IS NOT NULL OR t.called_at IS NOT NULL)
          AND t.created_at IS NOT NULL`,
       [managerId]
@@ -47,14 +48,15 @@ const getAnalyticsOverview = async (req, res, next) => {
     }
     const avgWaitingMinutes = waitSampleCount > 0 ? Math.round((totalWaitMinutes / waitSampleCount) * 10) / 10 : 0;
 
-    // 3. Average Service Duration (difference between completed_at and service_started_at)
+    // 3. Average Service Duration: Completion Time - Service Start Time for COMPLETED service records
     const completedTokensRes = await db.query(
       `SELECT t.service_started_at, t.called_at, t.completed_at
        FROM queues q
        JOIN tokens t ON q.id = t.queue_id
        WHERE q.manager_id = $1 
          AND t.status = 'COMPLETED'
-         AND t.completed_at IS NOT NULL`,
+         AND t.completed_at IS NOT NULL
+         AND (t.service_started_at IS NOT NULL OR t.called_at IS NOT NULL)`,
       [managerId]
     );
 
@@ -152,6 +154,7 @@ const getAnalyticsOverview = async (req, res, next) => {
 
 /**
  * Queue Length Trend over time
+ * Genuine historical queue snapshots recorded on operational events
  * GET /api/analytics/queue-trends
  */
 const getQueueTrends = async (req, res, next) => {
@@ -174,26 +177,23 @@ const getQueueTrends = async (req, res, next) => {
       [managerId]
     );
 
-    let points = snapshotsRes.rows;
+    const points = snapshotsRes.rows;
+
     if (points.length === 0) {
-      const fallbackRes = await db.query(
-        `SELECT 
-          t.created_at AS recorded_at,
-          1 AS waiting_count,
-          q.name AS queue_name
-         FROM tokens t
-         JOIN queues q ON t.queue_id = q.id
-         WHERE q.manager_id = $1
-         ORDER BY t.created_at ASC
-         LIMIT 20`,
-        [managerId]
-      );
-      points = fallbackRes.rows;
+      return res.json({
+        success: true,
+        trend: {
+          labels: [],
+          data: [],
+          raw: [],
+        },
+      });
     }
 
+    // Format timestamps cleanly with seconds to guarantee distinct chronological labels
     const labels = points.map((p) => {
       const d = new Date(p.recorded_at);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     });
 
     const data = points.map((p) => p.waiting_count);
@@ -201,8 +201,8 @@ const getQueueTrends = async (req, res, next) => {
     return res.json({
       success: true,
       trend: {
-        labels: labels.length > 0 ? labels : ['Current'],
-        data: data.length > 0 ? data : [0],
+        labels,
+        data,
         raw: points,
       },
     });
@@ -213,6 +213,7 @@ const getQueueTrends = async (req, res, next) => {
 
 /**
  * Average Waiting Time by Queue
+ * Calculated strictly from completed service records (service_started_at - created_at)
  * GET /api/analytics/waiting-times
  */
 const getWaitingTimesByQueue = async (req, res, next) => {
@@ -225,12 +226,26 @@ const getWaitingTimesByQueue = async (req, res, next) => {
       [managerId]
     );
 
-    // Fetch served tokens
+    if (queuesRes.rows.length === 0) {
+      return res.json({
+        success: true,
+        chart: {
+          labels: [],
+          data: [],
+        },
+        rows: [],
+      });
+    }
+
+    // Fetch COMPLETED tokens for historical accuracy
     const tokensRes = await db.query(
       `SELECT t.queue_id, t.created_at, t.called_at, t.service_started_at
        FROM queues q
        JOIN tokens t ON q.id = t.queue_id
-       WHERE q.manager_id = $1 AND (t.called_at IS NOT NULL OR t.service_started_at IS NOT NULL)`,
+       WHERE q.manager_id = $1 
+         AND t.status = 'COMPLETED'
+         AND (t.called_at IS NOT NULL OR t.service_started_at IS NOT NULL)
+         AND t.created_at IS NOT NULL`,
       [managerId]
     );
 
@@ -260,8 +275,8 @@ const getWaitingTimesByQueue = async (req, res, next) => {
     return res.json({
       success: true,
       chart: {
-        labels: labels.length > 0 ? labels : ['No queues'],
-        data: data.length > 0 ? data : [0],
+        labels,
+        data,
       },
       rows,
     });
@@ -317,15 +332,18 @@ const getDailyTokens = async (req, res, next) => {
       `SELECT t.created_at
        FROM queues q
        JOIN tokens t ON q.id = t.queue_id
-       WHERE q.manager_id = $1`,
+       WHERE q.manager_id = $1
+       ORDER BY t.created_at ASC`,
       [managerId]
     );
 
     const dayCounts = {};
     for (const t of tokensRes.rows) {
-      const d = new Date(t.created_at);
-      const key = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-      dayCounts[key] = (dayCounts[key] || 0) + 1;
+      if (t.created_at) {
+        const d = new Date(t.created_at);
+        const key = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        dayCounts[key] = (dayCounts[key] || 0) + 1;
+      }
     }
 
     const labels = Object.keys(dayCounts);
@@ -334,8 +352,8 @@ const getDailyTokens = async (req, res, next) => {
     return res.json({
       success: true,
       chart: {
-        labels: labels.length > 0 ? labels : ['Today'],
-        data: data.length > 0 ? data : [0],
+        labels,
+        data,
       },
       rows: labels.map((l, i) => ({ label: l, count: data[i] })),
     });

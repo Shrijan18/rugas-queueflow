@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Filter, Layers, RefreshCw, Inbox } from 'lucide-react';
+import { toast } from 'react-toastify';
 import api from '../services/api';
 import QueueCard from '../components/QueueCard';
 import CreateQueueModal from '../components/CreateQueueModal';
@@ -33,24 +34,32 @@ const Queues = () => {
   };
 
   const handleSaveQueue = async (data) => {
-    if (editingQueue) {
-      await api.put(`/queues/${editingQueue.id}`, data);
-    } else {
-      await api.post('/queues', data);
+    try {
+      if (editingQueue) {
+        const res = await api.put(`/queues/${editingQueue.id}`, data);
+        toast.success(res.data?.message || 'Queue renamed successfully.');
+      } else {
+        const res = await api.post('/queues', data);
+        toast.success(res.data?.message || 'Queue created successfully.');
+      }
+      setEditingQueue(null);
+      setIsCreateModalOpen(false);
+      await fetchQueues();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save queue.');
     }
-    setEditingQueue(null);
-    await fetchQueues();
   };
 
   const handleDeleteConfirm = async () => {
     if (!deletingQueue) return;
     try {
       setIsDeleting(true);
-      await api.delete(`/queues/${deletingQueue.id}`);
+      const res = await api.delete(`/queues/${deletingQueue.id}`);
+      toast.success(res.data?.message || 'Queue deleted successfully.');
       setDeletingQueue(null);
       await fetchQueues();
     } catch (err) {
-      console.error('Failed to delete queue:', err);
+      toast.error(err.response?.data?.message || 'Failed to delete queue.');
     } finally {
       setIsDeleting(false);
     }

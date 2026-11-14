@@ -1,9 +1,9 @@
 import React from 'react';
-import { Menu, Bell, Search, LogOut, ExternalLink } from 'lucide-react';
+import { Menu, HelpCircle, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
-const Navbar = ({ onMenuClick, title = 'Dashboard' }) => {
+const Navbar = ({ onMenuClick, onToggleGuide, title = 'Dashboard' }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -30,9 +30,21 @@ const Navbar = ({ onMenuClick, title = 'Dashboard' }) => {
 
         {/* Right Side: Profile & Quick Actions */}
         <div className="flex items-center space-x-3">
-          <div className="hidden sm:flex items-center text-xs font-medium text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200/60">
+          {/* Help & Walkthrough Button */}
+          {onToggleGuide && (
+            <button
+              onClick={onToggleGuide}
+              className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-full border border-slate-200 hover:border-brand-300 bg-white hover:bg-brand-50/60 text-slate-600 hover:text-brand-700 text-xs font-semibold transition-all shadow-2xs"
+              title="Toggle QueueFlow Help Guide"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-brand-600" />
+              <span>Help Guide</span>
+            </button>
+          )}
+
+          <div className="hidden md:flex items-center text-xs font-medium text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200/60">
             <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-pulse"></span>
-            QueueFlow System Online
+            QueueFlow Online
           </div>
 
           {/* User initials bubble */}

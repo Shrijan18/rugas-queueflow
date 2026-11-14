@@ -39,7 +39,9 @@ const TokenTable = ({
   }
 
   const waitingTokens = tokens.filter((t) => t.status === 'WAITING');
-  const maxPosition = waitingTokens.length;
+  const maxPosition = waitingTokens.length > 0 
+    ? Math.max(...waitingTokens.map((t) => t.position || 0))
+    : 0;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
@@ -138,11 +140,11 @@ const TokenTable = ({
                         <button
                           onClick={() => onMoveUp(token.id)}
                           disabled={isFirst || isLoading}
-                          title={isFirst ? "First in queue" : "Move Up in queue"}
+                          title={isFirst ? "First token cannot move up" : "Move Up in queue"}
                           className={`p-1.5 rounded-lg border text-xs font-medium transition-all ${
-                            isFirst
+                            isFirst || isLoading
                               ? 'opacity-30 border-slate-200 text-slate-300 cursor-not-allowed'
-                              : 'border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 active:scale-95'
+                              : 'border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 active:scale-95 cursor-pointer'
                           }`}
                         >
                           <ArrowUp className="w-3.5 h-3.5" />
@@ -152,11 +154,11 @@ const TokenTable = ({
                         <button
                           onClick={() => onMoveDown(token.id)}
                           disabled={isLast || isLoading}
-                          title={isLast ? "Last in queue" : "Move Down in queue"}
+                          title={isLast ? "Last token cannot move down" : "Move Down in queue"}
                           className={`p-1.5 rounded-lg border text-xs font-medium transition-all ${
-                            isLast
+                            isLast || isLoading
                               ? 'opacity-30 border-slate-200 text-slate-300 cursor-not-allowed'
-                              : 'border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 active:scale-95'
+                              : 'border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 active:scale-95 cursor-pointer'
                           }`}
                         >
                           <ArrowDown className="w-3.5 h-3.5" />
@@ -167,7 +169,9 @@ const TokenTable = ({
                           onClick={() => onCancel(token)}
                           disabled={isLoading}
                           title="Cancel Token"
-                          className="p-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 active:scale-95 transition-all ml-1"
+                          className={`p-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 active:scale-95 transition-all ml-1 ${
+                            isLoading ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                          }`}
                         >
                           <XCircle className="w-3.5 h-3.5" />
                         </button>

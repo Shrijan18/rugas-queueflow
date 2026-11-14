@@ -67,7 +67,6 @@ const register = async (req, res, next) => {
       success: true,
       message: 'Registration successful! Welcome to QueueFlow.',
       manager,
-      token, // Also send token in response for flexibility in API clients
     });
   } catch (err) {
     next(err);
@@ -137,7 +136,6 @@ const login = async (req, res, next) => {
       success: true,
       message: 'Login successful! Welcome back.',
       manager: safeManager,
-      token,
     });
   } catch (err) {
     next(err);

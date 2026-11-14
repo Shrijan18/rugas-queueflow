@@ -14,11 +14,13 @@ import {
   Inbox
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import StatCard from '../components/StatCard';
 import QueueCard from '../components/QueueCard';
 import CreateQueueModal from '../components/CreateQueueModal';
+import ConfirmModal from '../components/ConfirmModal';
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -28,6 +30,9 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editingQueue, setEditingQueue] = useState(null);
+  const [deletingQueue, setDeletingQueue] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -48,18 +53,51 @@ const Dashboard = () => {
       if (activityRes.data?.success) {
         setActivities(activityRes.data.activities || []);
       }
+      if (isManual) {
+        toast.info('Dashboard metrics updated');
+      }
     } catch (err) {
       console.error('Failed to load dashboard:', err);
+      toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  const handleCreateQueue = async (data) => {
-    const res = await api.post('/queues', data);
-    if (res.data?.success) {
+  const handleSaveQueue = async (data) => {
+    try {
+      if (editingQueue) {
+        const res = await api.put(`/queues/${editingQueue.id}`, data);
+        if (res.data?.success) {
+          toast.success(res.data.message || 'Queue updated successfully');
+        }
+      } else {
+        const res = await api.post('/queues', data);
+        if (res.data?.success) {
+          toast.success(res.data.message || 'Queue created successfully');
+        }
+      }
+      setEditingQueue(null);
+      setIsCreateModalOpen(false);
       await fetchDashboardData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Operation failed');
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingQueue) return;
+    try {
+      setIsDeleting(true);
+      const res = await api.delete(`/queues/${deletingQueue.id}`);
+      toast.success(res.data?.message || 'Queue deleted successfully');
+      setDeletingQueue(null);
+      await fetchDashboardData();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to delete queue');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -152,13 +190,15 @@ const Dashboard = () => {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-bold text-slate-900 tracking-tight">My Queues</h2>
-              <p className="text-xs text-slate-500">Live queues supervised by you</p>
+              <p className="text-xs text-slate-500">
+                Showing all {queues.length} active {queues.length === 1 ? 'queue' : 'queues'} supervised by you
+              </p>
             </div>
             <Link
               to="/queues"
               className="text-xs font-semibold text-brand-600 hover:text-brand-700 flex items-center space-x-1"
             >
-              <span>View All</span>
+              <span>Manage Directory</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
@@ -173,7 +213,10 @@ const Dashboard = () => {
                 Get started by creating your first queue line (e.g. "Customer Support" or "Billing Desk").
               </p>
               <button
-                onClick={() => setIsCreateModalOpen(true)}
+                onClick={() => {
+                  setEditingQueue(null);
+                  setIsCreateModalOpen(true);
+                }}
                 className="mt-5 inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-brand-600 text-white font-semibold text-xs shadow-xs hover:bg-brand-700 transition-colors"
               >
                 <Plus className="w-4 h-4" />
@@ -182,8 +225,16 @@ const Dashboard = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {queues.slice(0, 4).map((queue) => (
-                <QueueCard key={queue.id} queue={queue} />
+              {queues.map((queue) => (
+                <QueueCard 
+                  key={queue.id} 
+                  queue={queue} 
+                  onEdit={(q) => {
+                    setEditingQueue(q);
+                    setIsCreateModalOpen(true);
+                  }}
+                  onDelete={(q) => setDeletingQueue(q)}
+                />
               ))}
             </div>
           )}
@@ -236,11 +287,27 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Create Queue Modal */}
+      {/* Create / Edit Queue Modal */}
       <CreateQueueModal
         isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onSubmit={handleCreateQueue}
+        onClose={() => {
+          setIsCreateModalOpen(false);
+          setEditingQueue(null);
+        }}
+        onSubmit={handleSaveQueue}
+        editingQueue={editingQueue}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={!!deletingQueue}
+        onClose={() => setDeletingQueue(null)}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Queue"
+        message={`Are you sure you want to permanently delete "${deletingQueue?.name}"? All associated tokens, history, and metrics will be removed.`}
+        confirmText="Delete Queue"
+        isDestructive={true}
+        isLoading={isDeleting}
       />
     </div>
   );
